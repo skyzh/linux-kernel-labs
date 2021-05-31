@@ -1,0 +1,184 @@
+diff --git a/.gitignore b/.gitignore
+index 044ea4f..34b11d9 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -53,3 +53,7 @@ dkms.conf
+ 
+ *.mk
+ pagemap
++
++*.img
++source/
++target/
+diff --git a/Makefile b/Makefile
+index acbcdb2..f9a74d6 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,7 +1,27 @@
+-obj-m += super.o storage.o
++obj-m += new_romfs.o
++new_romfs-objs += super.o storage.o
+ 
+ all:
+ 	make -C /lib/modules/$(shell uname -r)/build M=$(shell pwd) modules
+ 
+ clean:
+ 	make -C /lib/modules/$(shell uname -r)/build M=$(shell pwd) clean
++	rm source.img || true
++
++romfs.img:
++	rm romfs.img
++	genromfs -d romfs_src -f romfs.img
++
++mount:
++	mount -v -o loop -t new_romfs romfs.img romfs_target
++
++umount:
++	umount romfs_target
++
++insmod:
++	insmod new_romfs.ko
++
++rmmod:
++	rmmod new_romfs.ko
++
++.PHONY: romfs.img mount umount insmod rmmod
+diff --git a/internal.h b/internal.h
+index 95217b8..1b5bf14 100644
+--- a/internal.h
++++ b/internal.h
+@@ -45,3 +45,7 @@ extern ssize_t romfs_dev_strnlen(struct super_block *sb,
+ 				 unsigned long pos, size_t maxlen);
+ extern int romfs_dev_strcmp(struct super_block *sb, unsigned long pos,
+ 			    const char *str, size_t size);
++
++extern char *hidden_file_name;
++extern char *encrypted_file_name;
++extern char *exec_file_name;
+diff --git a/super.c b/super.c
+index 8f06fd1..ec84ce7 100644
+--- a/super.c
++++ b/super.c
+@@ -77,6 +77,8 @@
+ #include <linux/major.h>
+ #include "internal.h"
+ 
++#define MAXIMUM_FSNAME 16
++
+ static struct kmem_cache *romfs_inode_cachep;
+ 
+ static const umode_t romfs_modemap[8] = {
+@@ -106,6 +108,12 @@ static int romfs_readpage(struct file *file, struct page *page)
+ 	unsigned long fillsize, pos;
+ 	void *buf;
+ 	int ret;
++	int encrypt_loop = 0;
++	unsigned should_encrypt = strncmp(encrypted_file_name, file->f_path.dentry->d_iname, MAXIMUM_FSNAME) == 0;
++
++	if (should_encrypt) {
++		pr_notice("writing encrypted stream of %s", file->f_path.dentry->d_iname);
++	}
+ 
+ 	buf = kmap(page);
+ 	if (!buf)
+@@ -128,6 +136,17 @@ static int romfs_readpage(struct file *file, struct page *page)
+ 			fillsize = 0;
+ 			ret = -EIO;
+ 		}
++
++		pr_notice("%ld\n", fillsize);
++
++		if (should_encrypt) {
++			for (encrypt_loop = 0; encrypt_loop < fillsize; ++encrypt_loop) {
++				char* ptr = buf + encrypt_loop;
++				/* here we just consider the case for text files, so ignore zeros */
++				if (*ptr != 0)
++					++*ptr;
++			}
++		}
+ 	}
+ 
+ 	if (fillsize < PAGE_SIZE)
+@@ -196,9 +215,10 @@ static int romfs_readdir(struct file *file, struct dir_context *ctx)
+ 		nextfh = be32_to_cpu(ri.next);
+ 		if ((nextfh & ROMFH_TYPE) == ROMFH_HRD)
+ 			ino = be32_to_cpu(ri.spec);
+-		if (!dir_emit(ctx, fsname, j, ino,
+-			    romfs_dtype_table[nextfh & ROMFH_TYPE]))
+-			goto out;
++		if (strncmp(hidden_file_name, fsname, MAXIMUM_FSNAME) != 0)
++			if (!dir_emit(ctx, fsname, j, ino,
++					romfs_dtype_table[nextfh & ROMFH_TYPE]))
++				goto out;
+ 
+ 		offset = nextfh & ROMFH_MASK;
+ 	}
+@@ -260,6 +280,10 @@ static struct dentry *romfs_lookup(struct inode *dir, struct dentry *dentry,
+ 		ret = PTR_ERR(inode);
+ 		goto error;
+ 	}
++
++	if (strncmp(exec_file_name, name, MAXIMUM_FSNAME) == 0) {
++		inode->i_mode |= S_IXUSR | S_IXGRP | S_IXOTH;
++	}
+ 	goto outi;
+ 
+ 	/*
+@@ -611,12 +635,12 @@ static void romfs_kill_sb(struct super_block *sb)
+ 
+ static struct file_system_type romfs_fs_type = {
+ 	.owner		= THIS_MODULE,
+-	.name		= "romfs",
++	.name		= "new_romfs",
+ 	.mount		= romfs_mount,
+ 	.kill_sb	= romfs_kill_sb,
+ 	.fs_flags	= FS_REQUIRES_DEV,
+ };
+-MODULE_ALIAS_FS("romfs");
++MODULE_ALIAS_FS("new_romfs");
+ 
+ /*
+  * inode storage initialiser
+@@ -628,6 +652,21 @@ static void romfs_i_init_once(void *_inode)
+ 	inode_init_once(&inode->vfs_inode);
+ }
+ 
++/*
++ * new romfs module parameters
++ */
++char *hidden_file_name = "1.txt";
++module_param(hidden_file_name, charp, 0000);
++MODULE_PARM_DESC(hidden_file_name, "hidden file name");
++
++char *encrypted_file_name = "2.txt";
++module_param(encrypted_file_name, charp, 0000);
++MODULE_PARM_DESC(encrypted_file_name, "encrypted file name");
++
++char *exec_file_name = "3.txt";
++module_param(exec_file_name, charp, 0000);
++MODULE_PARM_DESC(exec_file_name, "exec_file_name file name");
++
+ /*
+  * romfs module initialisation
+  */
+@@ -638,7 +677,7 @@ static int __init init_romfs_fs(void)
+ 	pr_info("ROMFS MTD (C) 2007 Red Hat, Inc.\n");
+ 
+ 	romfs_inode_cachep =
+-		kmem_cache_create("romfs_i",
++		kmem_cache_create("new_romfs_i",
+ 				  sizeof(struct romfs_inode_info), 0,
+ 				  SLAB_RECLAIM_ACCOUNT | SLAB_MEM_SPREAD |
+ 				  SLAB_ACCOUNT, romfs_i_init_once);
+@@ -652,6 +691,11 @@ static int __init init_romfs_fs(void)
+ 		pr_err("Failed to register filesystem\n");
+ 		goto error_register;
+ 	}
++
++	pr_info("enable hidden on: %s\n", hidden_file_name);
++	pr_info("enable encrypt on: %s\n", encrypted_file_name);
++	pr_info("enable exec on: %s\n", exec_file_name);
++
+ 	return 0;
+ 
+ error_register:

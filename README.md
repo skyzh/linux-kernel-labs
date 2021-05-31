@@ -1,14 +1,16 @@
-# linux-kernel-syscall-hook
+# Linux Kernel Labs
 
-This kernel module hooks syscalls on x86 Linux. Tested on Linux 5.4.
+This repo illustrates how to write Linux kernel module labs
+safely and gracefully in a simple and concise way. Contrary
+to most works on CSDN, we seek for simplest and most
+understandable way to tackle a problem.
 
-## Usage
-
-```bash
-make
-make test
-```
+> Simplicity is better than complexity,
+>
+> Conciseness is better then tediousness,
+>
+> And this is what TA doesn't care.
 
 ## License
 
-GPL 2.0 for kernel module, Apache 2.0 for the rest.
+GPL 2.0
