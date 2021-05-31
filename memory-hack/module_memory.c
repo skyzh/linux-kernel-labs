@@ -52,7 +52,7 @@ static void m_find_vma(unsigned long long addr)
     {
         down_read(&mm->mmap_sem);
         /* pin exactly one page */
-        if (get_user_pages(addr, 1, 0, pages) < 1)
+        if (get_user_pages(addr, 1, 0, pages, NULL) < 1)
         {
             printk(KERN_WARNING "translation not found\n");
             up_read(&mm->mmap_sem);

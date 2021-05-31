@@ -9,6 +9,10 @@ understandable way to tackle a problem.
 >
 > Conciseness is better then tediousness,
 >
+> Understanding is better than long reports,
+>
+> Experimenting is better than sticking to traditions,
+> 
 > And this is what TA doesn't care.
 
 ## License
